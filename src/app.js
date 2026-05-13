@@ -15,46 +15,43 @@ const app = express();
 // ─── Trust proxy (required on Vercel / behind load balancers) ────────────────
 app.set("trust proxy", 1);
 
-// ─── Body parsers — MUST come before CORS and all routes ────────────────────
-// BUG FIX: On Vercel the request body stream can be consumed before it reaches
-// express.json() if middleware order is wrong.  Putting body parsers first
-// ensures they always run, which fixes the 400 "fields are required" error
-// (the body was arriving as {} because it wasn't being parsed).
+// ─── Body parsers ────────────────────────────────────────────────────────────
 app.use(express.json({ limit: "10kb" }));
 app.use(express.urlencoded({ extended: true, limit: "10kb" }));
 app.use(cookieParser());
 
 // ─── CORS ────────────────────────────────────────────────────────────────────
-// Must list every origin the browser sends.  Credentials:true is required for
-// the httpOnly cookie to be forwarded on cross-origin requests.
 const allowedOrigins = [
   "http://localhost:3000",
   "https://circuits.quantumlogicslimited.com",
   "https://digital-logics-studio.vercel.app",
   "https://circuit.quantumlogicslimited.com",
   "https://digital-logics-studio-kccbyx2bo-seno-quantum-coders-projects.vercel.app",
-  // Dynamically include whatever CLIENT_URL is set to in the environment
   ...(process.env.CLIENT_URL ? [process.env.CLIENT_URL] : []),
 ];
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow same-origin / no-origin (curl, Postman, server-to-server)
-      if (!origin) return callback(null, true);
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`CORS policy blocked origin: ${origin}`));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  exposedHeaders: ["Set-Cookie"],
+};
 
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error(`CORS policy blocked origin: ${origin}`));
-      }
-    },
-    credentials: true, // allow cookies cross-origin
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    exposedHeaders: ["Set-Cookie"],
-  }),
-);
+app.use(cors(corsOptions));
+
+// ─── Handle OPTIONS preflight explicitly ─────────────────────────────────────
+// Vercel serverless functions don't auto-handle OPTIONS — without this the
+// browser's preflight request gets a 404 with no CORS headers, blocking all
+// cross-origin requests in production.
+app.options("*", cors(corsOptions));
 
 // ─── Swagger UI ──────────────────────────────────────────────────────────────
 {
